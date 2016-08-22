@@ -55,36 +55,58 @@
 '''
 
 import collectd
+import ssl
 from jsonrpclib import Server
-switch = None
+switch = {}
 platform = ''
+hosts = []
+#username = 'foobar'
+#password = 'foobar'
+
+ssl._create_default_https_context = ssl._create_unverified_context
 
 #== Our Own Functions go here: ==#
 def configer(ObjConfiguration):
-   collectd.debug('Configuring Stuff')
+    global username
+    global password
+    collectd.debug('Configuring Stuff')
+    for node in ObjConfiguration.children:
+        key = node.key.lower()
+        val = node.values[0]
+        if key == 'host':
+            hosts.append(val)
+            collectd.error('collectd-eos plugin: using host %s' % val)
+        elif key == 'username':
+            username = val
+        elif key == 'password':
+            password = val
+        else:
+            collectd.error('collectd-eos plugin: Unknown config key: %s' % key)
 
 def initer():
     global switch
-    switch = Server( "http://admin:@localhost/command-api" )
-    response = switch.runCmds( 1, ["show version"] )
-    collectd.debug( "The switch's system MAC addess is %s" % response[0]["systemMacAddress"] )
+    for h in hosts:
+        switch[h] = Server( "https://%s:%s@%s/command-api"%(username,password,h) )
+        response = switch[h].runCmds( 1, ["show version"] )
+        collectd.error( "Switch %s system MAC addess is %s" % (h,response[0]["systemMacAddress"]) )
     
 def reader(input_data=None):
     metric = collectd.Values();
-    intStats(metric)
-    intDom(metric)
-    response = switch.runCmds( 1, ["show version"] )
-    #Check whether this platform supports LANZ
-    global platform
-    platform = response[0]["modelName"][ 4:8 ]
-    if platform in ('7150', '7124', '7148' ):
-        lanzTxLatency(metric)
-        lanzQueueLength(metric)
-        lanzDrops(metric)
+    for h in hosts:
+        intStats(metric, h)
+        intDom(metric, h)
+        response = switch[h].runCmds( 1, ["show version"] )
+        #Check whether this platform supports LANZ
+        global platform
+        platform = response[0]["modelName"][ 4:8 ]
+        if platform in ('7150', '7124', '7148' ):
+            lanzQueueLength(metric)
+            lanzDrops(metric, h)
+            lanzDrops(metric, h)
 
-def intStats(metric):
+def intStats(metric,host):
     intMetric = metric
-    response = switch.runCmds( 1, ["show interfaces counters"] )
+    response = switch[host].runCmds( 1, ["show interfaces counters"] )
     for x in response[0]["interfaces"]:
         UcastPkts = [ 0, 0 ]
         BroadcastPkts = [ 0, 0 ]
@@ -115,7 +137,8 @@ def intStats(metric):
                 elif y[3:] == 'Octets':
                     Octets[1] = response[0]["interfaces"][x][y]
         #Dispatch the metrics
-        intMetric.plugin = 'eos-interface-counters-%s' % x
+        intMetric.plugin = 'eos.%s' % host
+        intMetric.plugin_instance = x
         intMetric.values = BroadcastPkts
         intMetric.type = 'eos_if_BroadcastPkts'
         intMetric.dispatch()
@@ -132,24 +155,25 @@ def intStats(metric):
         intMetric.type = 'eos_if_Octets'
         intMetric.dispatch()
 
-def intDom(metric):
+def intDom(metric,host):
     intMetric = metric
-    response = switch.runCmds( 1, ["show interfaces transceiver"] )
+    response = switch[host].runCmds( 1, ["show interfaces transceiver"] )
     for x in response[0]["interfaces"]:
-        intMetric.plugin = 'eos-interface-dom-%s' % x
+        intMetric.plugin = 'eos.%s' % host
+        intMetric.plugin_instance = x
         for y in response[0]["interfaces"][x]:
-            if y not in [ 'updateTime', 'vendorSn', 'mediaType' ]:
+            if y not in [ 'updateTime', 'vendorSn', 'mediaType','narrowBand' ]:
                 intMetric.type = 'eos_dom_%s' % y
                 intMetric.values = [ response[0]["interfaces"][x][y] ]
                 intMetric.dispatch()
 
-def lanzTxLatency(metric):
+def lanzTxLatency(metric,host):
     intMetric = metric
-    response = switch.runCmds( 1, ["show queue-monitor length limit 10 seconds tx-latency"] )
+    response = switch[host].runCmds( 1, ["show queue-monitor length limit 10 seconds tx-latency"] )
     #Check whether this platform is a 7150
     if platform == '7150':
 		for x in response[0]["entryList"]:
-			intMetric.plugin = 'eos-lanz'
+			intMetric.plugin = '%s.eos-lanz' % host
 			intMetric.plugin_instance = x["interface"]
 			intMetric.type = 'eos_lanz_txLatency'
 			intMetric.type_instance = 'trafficClass-%s' % x["trafficClass"]
@@ -157,14 +181,15 @@ def lanzTxLatency(metric):
 			intMetric.values = [ x["txLatency"] ]
 			intMetric.dispatch()
         
-def lanzQueueLength(metric):
+def lanzQueueLength(metric,host):
     intMetric = metric
-    response = switch.runCmds( 1, ["show queue-monitor length limit 10 seconds"] )
+    response = switch[host].runCmds( 1, ["show queue-monitor length limit 10 seconds"] )
     #Check whether this platform is a 7150
     if platform == '7150':
 		for x in response[0]["entryList"]:
 			if x["entryType"] == 'U':
-				intMetric.plugin = 'eos-lanz'
+			        intMetric.plugin = '%s.eos-lanz' % host
+				#intMetric.plugin = 'eos-lanz'
 				intMetric.plugin_instance = x["interface"]
 				intMetric.type = 'eos_lanz_queueLength'
 				intMetric.type_instance = 'trafficClass-%s' % x["trafficClass"]
@@ -172,13 +197,14 @@ def lanzQueueLength(metric):
 				intMetric.values = [ x["queueLength"] ]
 				intMetric.dispatch()
             
-def lanzDrops(metric):
+def lanzDrops(metric,host):
     intMetric = metric
-    response = switch.runCmds( 1, ["show queue-monitor length limit 10 seconds drops"] )
+    response = switch[host].runCmds( 1, ["show queue-monitor length limit 10 seconds drops"] )
     #Check whether this platform is a 7150
     if platform == '7150':
 		for x in response[0]["entryList"]:
-			intMetric.plugin = 'eos-lanz'
+			intMetric.plugin = '%s.eos-lanz' % host
+			#intMetric.plugin = 'eos-lanz'
 			intMetric.plugin_instance = x["interface"]
 			intMetric.type = 'eos_lanz_txDrops'
 			intMetric.time = x["entryTime"]
