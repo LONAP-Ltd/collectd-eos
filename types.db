@@ -199,6 +199,8 @@ eos_if_BroadcastPkts    rx:DERIVE:0:U, tx:DERIVE:0:U
 eos_if_MulticastPkts    rx:DERIVE:0:U, tx:DERIVE:0:U
 eos_if_Discards         rx:DERIVE:0:U, tx:DERIVE:0:U
 eos_if_Octets		rx:DERIVE:0:U, tx:DERIVE:0:U
+eos_if_Errors		rx:DERIVE:0:U, tx:DERIVE:0:U
+eos_if_Bandwidth	value:GAUGE:U:U
 eos_dom_txPower		value:GAUGE:U:U
 eos_dom_rxPower		value:GAUGE:U:U
 eos_dom_temperature	value:GAUGE:0:U
@@ -207,6 +209,13 @@ eos_dom_txBias		value:GAUGE:0:U
 eos_lanz_txLatency	value:GAUGE:0:U
 eos_lanz_queueLength    value:GAUGE:0:U
 eos_lanz_txDrops        value:GAUGE:0:U
+eos_decapPkts		value:DERIVE:0:U
+eos_decapBytes		value:DERIVE:0:U
+eos_encapTimeout	value:DERIVE:0:U
+eos_encapReadErr	value:DERIVE:0:U
+eos_encapSendErr	value:DERIVE:0:U
+eos_encapBytes		value:DERIVE:0:U
+eos_encapPkts		value:DERIVE:0:U
 
 #
 # Legacy types
