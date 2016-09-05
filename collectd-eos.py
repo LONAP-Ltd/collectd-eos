@@ -56,12 +56,14 @@
 
 import collectd
 import ssl
+from pprint import pprint
 from jsonrpclib import Server
 switch = {}
 platform = ''
 hosts = []
 #username = 'foobar'
 #password = 'foobar'
+
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -100,45 +102,64 @@ def reader(input_data=None):
         global platform
         platform = response[0]["modelName"][ 4:8 ]
         if platform in ('7150', '7124', '7148' ):
-            lanzQueueLength(metric)
+            lanzTxLatency(metric, h)
+            lanzQueueLength(metric, h)
             lanzDrops(metric, h)
-            lanzDrops(metric, h)
+        #vxlanSoftware(metric, h)
 
 def intStats(metric,host):
     intMetric = metric
-    response = switch[host].runCmds( 1, ["show interfaces counters"] )
+    response = switch[host].runCmds( 1, ["show interfaces"] )
     for x in response[0]["interfaces"]:
+        if "interfaceCounters" not in response[0]["interfaces"][x]: 
+            collectd.debug("No counters for %s %s"%(host,x))
+            continue
         UcastPkts = [ 0, 0 ]
         BroadcastPkts = [ 0, 0 ]
         MulticastPkts = [ 0, 0 ]
         Discards = [ 0, 0 ]
         Octets = [ 0, 0 ]
-        for y in response[0]["interfaces"][x]:
+        bandwidth = response[0]["interfaces"][x].get("bandwidth")
+        Errors = [ 0, 0 ]
+        statsBlock = response[0]["interfaces"][x]["interfaceCounters"]
+        timeStamp = statsBlock.get("counterRefreshTime")
+        for y in statsBlock:
             if y.startswith('in'):
                 if y[2:] == 'UcastPkts':
-                    UcastPkts[0] = response[0]["interfaces"][x][y]
+                    UcastPkts[0] = statsBlock[y]
                 elif y[2:] == 'BroadcastPkts':
-                    BroadcastPkts[0] = response[0]["interfaces"][x][y]
+                    BroadcastPkts[0] = statsBlock[y]
                 elif y[2:] == 'MulticastPkts':
-                    MulticastPkts[0] = response[0]["interfaces"][x][y]
+                    MulticastPkts[0] = statsBlock[y]
                 elif y[2:] == 'Discards':
-                    Discards[0] = response[0]["interfaces"][x][y]
+                    Discards[0] = statsBlock[y]
                 elif y[2:] == 'Octets':
-                    Octets[0] = response[0]["interfaces"][x][y]
+                    Octets[0] = statsBlock[y]
             if y.startswith('out'):
                 if y[3:] == 'UcastPkts':
-                    UcastPkts[1] = response[0]["interfaces"][x][y]
+                    UcastPkts[1] = statsBlock[y]
                 elif y[3:] == 'BroadcastPkts':
-                    BroadcastPkts[1] = response[0]["interfaces"][x][y]
+                    BroadcastPkts[1] = statsBlock[y]
                 elif y[3:] == 'MulticastPkts':
-                    MulticastPkts[1] = response[0]["interfaces"][x][y]
+                    MulticastPkts[1] = statsBlock[y]
                 elif y[3:] == 'Discards':
-                    Discards[1] = response[0]["interfaces"][x][y]
+                    Discards[1] = statsBlock[y]
                 elif y[3:] == 'Octets':
-                    Octets[1] = response[0]["interfaces"][x][y]
+                    Octets[1] = statsBlock[y]
+            if y == 'totalInErrors':
+                    Errors[0] = statsBlock[y]
+            if y == 'totalOutErrors':
+                    Errors[1] = statsBlock[y]
+        collectd.debug("Stats %s %s %f %i %i"%(host,x, timeStamp, Octets[0], Octets[1]))
+
         #Dispatch the metrics
-        intMetric.plugin = 'eos.%s' % host
+        intMetric.host = host
+        intMetric.plugin = 'eos'
         intMetric.plugin_instance = x
+        intMetric.time = timeStamp
+        intMetric.values = (bandwidth,)
+        intMetric.type = 'eos_if_Bandwidth'
+        intMetric.dispatch()
         intMetric.values = BroadcastPkts
         intMetric.type = 'eos_if_BroadcastPkts'
         intMetric.dispatch()
@@ -154,12 +175,16 @@ def intStats(metric,host):
         intMetric.values = Octets
         intMetric.type = 'eos_if_Octets'
         intMetric.dispatch()
+        intMetric.values = Errors
+        intMetric.type = 'eos_if_Errors'
+        intMetric.dispatch()
 
 def intDom(metric,host):
     intMetric = metric
     response = switch[host].runCmds( 1, ["show interfaces transceiver"] )
     for x in response[0]["interfaces"]:
-        intMetric.plugin = 'eos.%s' % host
+        intMetric.host = host
+        intMetric.plugin = 'eos'
         intMetric.plugin_instance = x
         for y in response[0]["interfaces"][x]:
             if y not in [ 'updateTime', 'vendorSn', 'mediaType','narrowBand' ]:
@@ -173,7 +198,8 @@ def lanzTxLatency(metric,host):
     #Check whether this platform is a 7150
     if platform == '7150':
 		for x in response[0]["entryList"]:
-			intMetric.plugin = '%s.eos-lanz' % host
+                        intMetric.host = host
+                        intMetric.plugin = 'eos'
 			intMetric.plugin_instance = x["interface"]
 			intMetric.type = 'eos_lanz_txLatency'
 			intMetric.type_instance = 'trafficClass-%s' % x["trafficClass"]
@@ -188,7 +214,8 @@ def lanzQueueLength(metric,host):
     if platform == '7150':
 		for x in response[0]["entryList"]:
 			if x["entryType"] == 'U':
-			        intMetric.plugin = '%s.eos-lanz' % host
+                                intMetric.host = host
+                                intMetric.plugin = 'eos'
 				#intMetric.plugin = 'eos-lanz'
 				intMetric.plugin_instance = x["interface"]
 				intMetric.type = 'eos_lanz_queueLength'
@@ -203,13 +230,29 @@ def lanzDrops(metric,host):
     #Check whether this platform is a 7150
     if platform == '7150':
 		for x in response[0]["entryList"]:
-			intMetric.plugin = '%s.eos-lanz' % host
-			#intMetric.plugin = 'eos-lanz'
+                        intMetric.host = host
+                        intMetric.plugin = 'eos'
 			intMetric.plugin_instance = x["interface"]
 			intMetric.type = 'eos_lanz_txDrops'
 			intMetric.time = x["entryTime"]
 			intMetric.values = [ x["txDrops"] ]
 			intMetric.dispatch()
+
+def vxlanSoftware(metric,host):
+    intMetric = metric
+    response = switch[host].runCmds( 1, ["show vxlan counters software"] )
+    vxlanCounters = response[0]['vxlanCounters']
+    intMetric.host = host
+    intMetric.plugin = 'eos'
+    intMetric.plugin_instance = 'vxlanSoftware'
+    for a in vxlanCounters:
+        collectd.error( "Switch %s BLAH %s" % (host,a))
+    for m in ['decapPkts', 'decapBytes', 'encapTimeout', 'encapReadErr', 'encapSendErr', 'encapBytes', 'encapPkts']:
+        if m in vxlanCounters: 
+            collectd.error( "Switch %s processing %s" % (host,m))
+            intMetric.type = 'eos_' + m
+            intMetric.values = [ vxlanCounters[m] ]
+            intMetric.dispatch()
 
 #== Hook Callbacks, Order is important! ==#
 collectd.register_config(configer)
