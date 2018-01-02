@@ -111,7 +111,8 @@ def intStats(metric,host):
     intMetric = metric
     response = switch[host].runCmds( 1, ["show interfaces"] )
     for x in response[0]["interfaces"]:
-        if "interfaceCounters" not in response[0]["interfaces"][x]: 
+        intresult = response[0]["interfaces"][x]
+        if "interfaceCounters" not in intresult: 
             collectd.debug("No counters for %s %s"%(host,x))
             continue
         UcastPkts = [ 0, 0 ]
@@ -119,37 +120,40 @@ def intStats(metric,host):
         MulticastPkts = [ 0, 0 ]
         Discards = [ 0, 0 ]
         Octets = [ 0, 0 ]
-        bandwidth = response[0]["interfaces"][x].get("bandwidth")
+        if intresult.get('lineProtocolStatus') == 'up':
+            bandwidth = intresult.get("bandwidth")
+        else:
+            bandwidth = 0
         Errors = [ 0, 0 ]
-        statsBlock = response[0]["interfaces"][x]["interfaceCounters"]
-        timeStamp = statsBlock.get("counterRefreshTime")
-        for y in statsBlock:
+        interfaceCounters = intresult["interfaceCounters"]
+        timeStamp = interfaceCounters.get("counterRefreshTime")
+        for y in interfaceCounters:
             if y.startswith('in'):
                 if y[2:] == 'UcastPkts':
-                    UcastPkts[0] = statsBlock[y]
+                    UcastPkts[0] = interfaceCounters[y]
                 elif y[2:] == 'BroadcastPkts':
-                    BroadcastPkts[0] = statsBlock[y]
+                    BroadcastPkts[0] = interfaceCounters[y]
                 elif y[2:] == 'MulticastPkts':
-                    MulticastPkts[0] = statsBlock[y]
+                    MulticastPkts[0] = interfaceCounters[y]
                 elif y[2:] == 'Discards':
-                    Discards[0] = statsBlock[y]
+                    Discards[0] = interfaceCounters[y]
                 elif y[2:] == 'Octets':
-                    Octets[0] = statsBlock[y]
+                    Octets[0] = interfaceCounters[y]
             if y.startswith('out'):
                 if y[3:] == 'UcastPkts':
-                    UcastPkts[1] = statsBlock[y]
+                    UcastPkts[1] = interfaceCounters[y]
                 elif y[3:] == 'BroadcastPkts':
-                    BroadcastPkts[1] = statsBlock[y]
+                    BroadcastPkts[1] = interfaceCounters[y]
                 elif y[3:] == 'MulticastPkts':
-                    MulticastPkts[1] = statsBlock[y]
+                    MulticastPkts[1] = interfaceCounters[y]
                 elif y[3:] == 'Discards':
-                    Discards[1] = statsBlock[y]
+                    Discards[1] = interfaceCounters[y]
                 elif y[3:] == 'Octets':
-                    Octets[1] = statsBlock[y]
+                    Octets[1] = interfaceCounters[y]
             if y == 'totalInErrors':
-                    Errors[0] = statsBlock[y]
+                    Errors[0] = interfaceCounters[y]
             if y == 'totalOutErrors':
-                    Errors[1] = statsBlock[y]
+                    Errors[1] = interfaceCounters[y]
         collectd.debug("Stats %s %s %f %i %i"%(host,x, timeStamp, Octets[0], Octets[1]))
 
         #Dispatch the metrics
